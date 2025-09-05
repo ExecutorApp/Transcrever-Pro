@@ -1,0 +1,76 @@
+name: Build and Release Transcrever Pro
+
+on:
+  push:
+    branches: [ main ]
+    tags: [ 'v*' ]
+  workflow_dispatch:
+
+jobs:
+  build-windows-artifacts:
+    name: Build on Windows (artefatos do workflow)
+    if: startsWith(github.ref, 'refs/heads/')
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies (CI)
+        run: npm ci
+
+      - name: Build app and Windows installer (no publish)
+        run: npm run dist
+        env:
+          CI: true
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: Transcrever-Pro-windows
+          path: |
+            release-build/**/*.exe
+            release-build/**/*.blockmap
+            release-build/**/latest.yml
+          if-no-files-found: error
+
+  release-windows:
+    name: Create GitHub Release (tag push)
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies (CI)
+        run: npm ci
+
+      - name: Build app and Windows installer (for Release)
+        run: npm run dist
+        env:
+          CI: true
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+
+      - name: Publish GitHub Release with assets
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Transcrever Pro ${{ github.ref_name }}
+          files: |
+            release-build/**/*.exe
+            release-build/**/*.blockmap
+            release-build/**/latest.yml
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

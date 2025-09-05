@@ -4,8 +4,49 @@ const { app, BrowserWindow, dialog, ipcMain, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const fsp = require('fs/promises');
+const { spawn } = require('child_process');
 
 let mainWindow;
+let backendProcess = null;
+
+function resolveBackendEntry() {
+  // Em dev: ../backend/server.js; em produção: resources/app.asar.unpacked/backend/server.js
+  const devPath = path.join(__dirname, '../backend/server.js');
+  const prodPath = path.join(process.resourcesPath, 'app.asar.unpacked', 'backend', 'server.js');
+  if (fs.existsSync(devPath)) return devPath;
+  if (fs.existsSync(prodPath)) return prodPath;
+  return null;
+}
+
+function startBackend() {
+  const entry = resolveBackendEntry();
+  if (!entry) {
+    console.warn('[backend] server.js não encontrado, seguindo sem backend.');
+    return;
+  }
+  // Executa o binário do Electron como Node definindo ELECTRON_RUN_AS_NODE=1
+  const env = {
+    ...process.env,
+    ELECTRON_RUN_AS_NODE: '1',
+    PORT: process.env.PORT || '3001',
+    FRONTEND_URL: process.env.FRONTEND_URL || 'file://',
+  };
+  backendProcess = spawn(process.execPath, [entry], {
+    env,
+    stdio: 'inherit',
+    windowsHide: true,
+  });
+  backendProcess.on('exit', (code, signal) => {
+    console.log(`[backend] encerrado (code=${code}, signal=${signal})`);
+    backendProcess = null;
+  });
+}
+
+function stopBackend() {
+  if (backendProcess && !backendProcess.killed) {
+    try { backendProcess.kill(); } catch {}
+  }
+}
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -36,11 +77,17 @@ app.on('window-all-closed', () => {
 });
 
 app.whenReady().then(() => {
+  // Iniciar backend local
+  startBackend();
   createWindow();
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
+});
+
+app.on('before-quit', () => {
+  stopBackend();
 });
 
 // IPC: abrir seletor nativo de diretório para path completo

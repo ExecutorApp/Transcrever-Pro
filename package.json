@@ -10,7 +10,8 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "desktop": "concurrently -k -n \"VITE,ELECTRON\" -c \"cyan.bold,green.bold\" \"vite --port 5175\" \"wait-on http://localhost:5175 && cross-env VITE_DEV_SERVER_URL=http://localhost:5175 electron .\"",
-    "dist": "npm run build && electron-builder --windows"
+    "backend:ci": "npm ci --prefix backend",
+    "dist": "npm run build && npm run backend:ci && electron-builder --windows"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.9.0",
@@ -93,7 +94,11 @@
     "files": [
       "dist/**",
       "electron/**",
+      "backend/**",
       "package.json"
+    ],
+    "asarUnpack": [
+      "backend/**"
     ],
     "win": {
       "target": [
