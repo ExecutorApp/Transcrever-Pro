@@ -123,27 +123,35 @@ ipcMain.handle('fs:saveTextFile', async (_evt, params = {}) => {
       throw new Error('Conteúdo inválido');
     }
 
-    // Permitir apenas extensões seguras (.txt)
+    // Sanitizar e validar extensão
+    const rawName = path.basename(filename).replace(/[\\/:*?"<>|]/g, '_');
+    const ext = path.extname(rawName).toLowerCase();
+    const baseName = rawName.slice(0, rawName.length - ext.length) || 'transcricao';
+
     const safeExt = ['.txt'];
-    const ext = path.extname(filename).toLowerCase();
     if (!safeExt.includes(ext)) {
       throw new Error('Extensão de arquivo não permitida');
     }
 
-    // Normalizar e construir caminho final
     const safeDir = path.normalize(directory);
-    const finalPath = path.join(safeDir, filename);
-
-    // Garantir que o diretório existe
     await fsp.mkdir(safeDir, { recursive: true });
 
-    // Adicionar BOM para arquivos .txt para compatibilidade com editores do Windows
+    // Resolver conflitos: prefixar N_ quando já existir
+    let effectiveName = `${baseName}${ext}`;
+    let finalPath = path.join(safeDir, effectiveName);
+    let counter = 1;
+    while (fs.existsSync(finalPath)) {
+      effectiveName = `${counter}_${baseName}${ext}`;
+      finalPath = path.join(safeDir, effectiveName);
+      counter += 1;
+    }
+
+    // Adicionar BOM para .txt (compatibilidade Notepad)
     const withBOM = ext === '.txt' ? (content.startsWith('\uFEFF') ? content : '\uFEFF' + content) : content;
 
-    // Escrever arquivo com encoding UTF-8 (com BOM para .txt)
     await fsp.writeFile(finalPath, withBOM, { encoding: 'utf8' });
 
-    return { ok: true, path: finalPath };
+    return { ok: true, path: finalPath, filename: effectiveName };
   } catch (err) {
     const message = err && err.message ? err.message : String(err);
     return { ok: false, error: message };

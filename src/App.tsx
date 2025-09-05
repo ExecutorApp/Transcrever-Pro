@@ -1,235 +1,200 @@
-/*
---------------------------------------------------------
-  Aplicação Principal: Vidéus SaaS
---------------------------------------------------------
-- min-h-screen ➔ Altura mínima da tela
-- bg-gradient-to-br ➔ Gradiente de fundo
-- font-sans ➔ Família de fonte
-*/
-
-import { useEffect, useState } from 'react';
+import React, { useState } from 'react';
+import { toast } from '@/hooks/use-toast';
+import { Toaster } from '@/components/ui/toaster';
+import { getFileBaseName, buildDefaultTranscriptContent } from '@/lib/utils';
 import Header from './components/Header';
 import UploadSection from './components/UploadSection';
-import { TranscriptionMode } from './components/CompactModeSelector';
-import { FileItem } from './components/FileManager';
-import FileProgressList from './components/FileProgressList';
 import UrlProgressList from './components/UrlProgressList';
+import FileProgressList from './components/FileProgressList';
 import TranscriptionModePanel from './components/TranscriptionModePanel';
 import RealTimeTranscription from './components/RealTimeTranscription';
-import TranscriptionResult from './components/TranscriptionResult';
-import DownloadOptions from './components/DownloadOptions';
-import { toast } from '@/hooks/use-toast';
-import { getFileBaseName, buildDefaultTranscriptContent } from '@/lib/utils';
 
-// URL do backend (configurável via Vite env)
-const BACKEND_URL: string = (import.meta as any)?.env?.VITE_BACKEND_URL || 'http://localhost:3001';
+const BACKEND_URL = 'http://localhost:3000';
 
-interface DownloadItem {
-  id: string;
-  url: string;
-  platform: string;
-  title?: string;
-  progress: number;
-  status: 'downloading' | 'completed' | 'error';
-  error?: string;
-}
+type FileItem = {
+  id: string,
+  name: string,
+  size: number,
+  duration: string,
+  type: string,
+  file: File | null,
+  status: string,
+  progress: number
+};
 
-type AppState = 'upload' | 'mode-selection' | 'real-time-transcription' | 'result' | 'download';
+type DownloadItem = {
+  id: string,
+  url: string,
+  platform: string,
+  progress: number,
+  status: string
+};
 
-interface TranscriptionData {
-  text: string;
-  language: string;
-  filename: string;
-}
+type TranscriptionData = {
+  text: string,
+  language: string,
+  filename: string
+};
 
-function App() {
-  const [currentState, setCurrentState] = useState<AppState>('upload');
-  const [selectedMode, setSelectedMode] = useState<TranscriptionMode>('balanced');
+type TranscriptionMode = 'balanced' | 'accurate';
+
+// Início do componente principal
+const App: React.FC = () => {
+  // Estados principais do App
   const [uploadedFiles, setUploadedFiles] = useState<FileItem[]>([]);
   const [downloadItems, setDownloadItems] = useState<DownloadItem[]>([]);
+  const [currentState, setCurrentState] = useState<'upload' | 'mode-selection' | 'real-time-transcription' | 'result'>('upload');
   const [isProcessing, setIsProcessing] = useState(false);
-  const [processingProgress, setProcessingProgress] = useState(0);
   const [processingStage, setProcessingStage] = useState<'idle' | 'processing' | 'completed'>('idle');
+  const [processingProgress, setProcessingProgress] = useState(0);
+  const [selectedMode, setSelectedMode] = useState<TranscriptionMode>('balanced');
+  const [transcriptionData, setTranscriptionData] = useState<TranscriptionData>({ text: '', language: '', filename: '' });
 
-  const [transcriptionData, setTranscriptionData] = useState<TranscriptionData>({
-    text: '',
-    language: '',
-    filename: ''
-  });
-
-  /*
-  --------------------------------------------------------
-    Função: Detectar Plataforma da URL
-  --------------------------------------------------------
-  */
-  const detectPlatform = (url: string): string => {
-    try {
-      const urlObj = new URL(url);
-      if (urlObj.hostname.includes('youtube.com') || urlObj.hostname.includes('youtu.be')) {
-        return 'YouTube';
-      } else if (urlObj.hostname.includes('instagram.com')) {
-        return 'Instagram';
-      } else if (urlObj.hostname.includes('facebook.com')) {
-        return 'Facebook';
-      } else if (urlObj.hostname.includes('vimeo.com')) {
-        return 'Vimeo';
-      } else {
-        return 'Desconhecido';
-      }
-    } catch {
-      return 'Desconhecido';
-    }
+  // Helpers locais
+  const isValidUrl = (value: string) => { try { new URL(value); return true; } catch { return false; } };
+  const detectPlatform = (u: string): string => {
+    const s = (u || '').toLowerCase();
+    if (s.includes('youtube.com') || s.includes('youtu.be')) return 'youtube';
+    if (s.includes('instagram.com')) return 'instagram';
+    if (s.includes('facebook.com') || s.includes('fb.watch')) return 'facebook';
+    return 'unknown';
   };
 
-  /*
-  --------------------------------------------------------
-    Função: Validar URL
-  --------------------------------------------------------
-  */
-  const isValidUrl = (url: string): boolean => {
-    try {
-      const urlObj = new URL(url);
-      const validDomains = ['youtube.com', 'youtu.be', 'instagram.com', 'facebook.com'];
-      return validDomains.some(domain => urlObj.hostname.includes(domain));
-    } catch {
-      return false;
-    }
-  };
 
-  /*
-  --------------------------------------------------------
-    Função: Adicionar Arquivo Selecionado
-  --------------------------------------------------------
-  */
-  const handleFileSelect = (files: File | File[]) => {
-    const fileArray = Array.isArray(files) ? files : [files];
+/*
+--------------------------------------------------------
+  Função: Adicionar Arquivo Selecionado
+--------------------------------------------------------
+*/
+const handleFileSelect = (files: File | File[]) => {
+  const fileArray = Array.isArray(files) ? files : [files];
+  
+  fileArray.forEach(file => {
+    // Simular duração do arquivo (em um app real, seria extraída do arquivo)
+    const duration = `${Math.floor(Math.random() * 10) + 1}:${Math.floor(Math.random() * 60).toString().padStart(2, '0')}`;
     
-    fileArray.forEach(file => {
-      // Simular duração do arquivo (em um app real, seria extraída do arquivo)
-      const duration = `${Math.floor(Math.random() * 10) + 1}:${Math.floor(Math.random() * 60).toString().padStart(2, '0')}`;
-      
-      const newFile: FileItem = {
-        id: `file-${Date.now()}-${Math.random()}`,
-        name: file.name,
-        size: file.size,
-        duration,
-        type: file.type.startsWith('video/') ? 'video' : 'audio',
-        file,
-        status: 'pending',
-        progress: 0,
-      };
-
-      setUploadedFiles(prev => {
-        // Verificar se o arquivo já existe para evitar duplicatas
-        const exists = prev.some(existingFile => 
-          existingFile.name === newFile.name && existingFile.size === newFile.size
-        );
-        
-        if (!exists) {
-          return [...prev, newFile];
-        }
-        return prev;
-      });
-    });
-
-    // Sempre que adicionar novos arquivos, volta o estágio para "idle" (aguardando)
-    setProcessingStage('idle');
-    setProcessingProgress(0);
-    setIsProcessing(false);
-    
-    // Se é o primeiro upload, mudar para tela de seleção
-    setTimeout(() => {
-      if (uploadedFiles.length === 0) {
-        setCurrentState('mode-selection');
-      }
-    }, 100);
-  };
-
-
-
-  /*
-  --------------------------------------------------------
-    Função: Adicionar Arquivo por URL (Atualizada)
-  --------------------------------------------------------
-  */
-  const handleUrlSubmit = (url: string) => {
-    if (!isValidUrl(url)) {
-      console.log('❌ URL inválida:', url);
-      return;
-    }
-
-    const platform = detectPlatform(url);
-	console.log('🎯 Plataforma detectada:', platform);
-    const newDownloadItem: DownloadItem = {
-      id: `download-${Date.now()}-${Math.random()}`,
-      url,
-      platform,
+    const newFile: FileItem = {
+      id: `file-${Date.now()}-${Math.random()}`,
+      name: file.name,
+      size: file.size,
+      duration,
+      type: file.type.startsWith('video/') ? 'video' : 'audio',
+      file,
+      status: 'pending',
       progress: 0,
-      status: 'downloading'
     };
 
-    setDownloadItems(prev => [...prev, newDownloadItem]);
-    
-    // Redirecionar para segunda tela
-    if (currentState === 'upload') {
+    setUploadedFiles(prev => {
+      // Verificar se o arquivo já existe para evitar duplicatas
+      const exists = prev.some(existingFile => 
+        existingFile.name === newFile.name && existingFile.size === newFile.size
+      );
+      
+      if (!exists) {
+        return [...prev, newFile];
+      }
+      return prev;
+    });
+  });
+
+  // Sempre que adicionar novos arquivos, volta o estágio para "idle" (aguardando)
+  setProcessingStage('idle');
+  setProcessingProgress(0);
+  setIsProcessing(false);
+  
+  // Se é o primeiro upload, mudar para tela de seleção
+  setTimeout(() => {
+    if (uploadedFiles.length === 0) {
       setCurrentState('mode-selection');
     }
+  }, 100);
+};
 
-   // Iniciar download real
-   startRealDownload(newDownloadItem.id, url);
+
+
+/*
+--------------------------------------------------------
+  Função: Adicionar Arquivo por URL (Atualizada)
+--------------------------------------------------------
+*/
+const handleUrlSubmit = (url: string) => {
+  if (!isValidUrl(url)) {
+    console.log('❌ URL inválida:', url);
+    return;
+  }
+
+  const platform = detectPlatform(url);
+  console.log('🎯 Plataforma detectada:', platform);
+  const newDownloadItem: DownloadItem = {
+    id: `download-${Date.now()}-${Math.random()}`,
+    url,
+    platform,
+    progress: 0,
+    status: 'downloading'
   };
 
-  /*
-  --------------------------------------------------------
-    Função: Download Real de Vídeo usando APIs
-  --------------------------------------------------------
-  */
- const startRealDownload = async (downloadId: string, url: string) => {
-   console.log('?? Iniciando download real de:', url);
-   
-   try {
-     const platform = detectPlatform(url);
-     
-     // Usar API apropriada baseada na plataforma
-     let videoInfo = null;
-     
-     if (platform === 'Instagram') {
-       videoInfo = await downloadInstagramVideo(url);
-     } else if (platform === 'YouTube') {
-       videoInfo = await downloadYouTubeVideo(url);
-     } else if (platform === 'Facebook') {
-       videoInfo = await downloadFacebookVideo(url);
-     } else {
-       throw new Error('Plataforma não suportada');
-     }
-     console.log('📋 Informações do vídeo:', videoInfo);
-     if (videoInfo && videoInfo.downloadUrl) {
-       // Iniciar download do arquivo
-       await downloadVideoFile(downloadId, videoInfo);
-     } else {
-       throw new Error('Não foi possível obter URL de download');
-     }
-     
-   } catch (error) {
-   const errorMessage = error instanceof Error ? error.message : 'Erro desconhecido';
-   const errorStack = error instanceof Error ? error.stack : undefined;
-   console.error('? Erro detalhado no download:', {
-     message: errorMessage,
-     stack: errorStack,
-     downloadId,
-     url
-   });
+  setDownloadItems(prev => [...prev, newDownloadItem]);
+  
+  // Redirecionar para segunda tela
+  if (currentState === 'upload') {
+    setCurrentState('mode-selection');
+  }
 
-     setDownloadItems(prev => prev.map(item => 
-       item.id === downloadId 
-         ? { ...item, status: 'error', progress: 0 }
-         : item
-     ));
-   }
- };
+  // Iniciar download real
+  startRealDownload(newDownloadItem.id, url);
+};
 
- /*
- /*
+/*
+--------------------------------------------------------
+  Função: Download Real de Vídeo usando APIs
+--------------------------------------------------------
+*/
+const startRealDownload = async (downloadId: string, url: string) => {
+  console.log('?? Iniciando download real de:', url);
+  
+  try {
+    const platform = detectPlatform(url);
+    
+    // Usar API apropriada baseada na plataforma
+    let videoInfo = null;
+    
+    if (platform === 'Instagram') {
+      videoInfo = await downloadInstagramVideo(url);
+    } else if (platform === 'YouTube') {
+      videoInfo = await downloadYouTubeVideo(url);
+    } else if (platform === 'Facebook') {
+      videoInfo = await downloadFacebookVideo(url);
+    } else {
+      throw new Error('Plataforma não suportada');
+    }
+    console.log('📋 Informações do vídeo:', videoInfo);
+    if (videoInfo && videoInfo.downloadUrl) {
+      // Iniciar download do arquivo
+      await downloadVideoFile(downloadId, videoInfo);
+    } else {
+      throw new Error('Não foi possível obter URL de download');
+    }
+    
+  } catch (error) {
+  const errorMessage = error instanceof Error ? error.message : 'Erro desconhecido';
+  const errorStack = error instanceof Error ? error.stack : undefined;
+  console.error('? Erro detalhado no download:', {
+    message: errorMessage,
+    stack: errorStack,
+    downloadId,
+    url
+  });
+
+    setDownloadItems(prev => prev.map(item => 
+      item.id === downloadId 
+        ? { ...item, status: 'error', progress: 0 }
+        : item
+    ));
+  }
+};
+
+/*
+/*
 --------------------------------------------------------
   Função: Download de Vídeo do Instagram (Múltiplas APIs)
 --------------------------------------------------------
@@ -1035,14 +1000,17 @@ Em produção real, aqui estaria o vídeo original.`;
   };
 
   // Enviar primeiro arquivo para o backend e acompanhar progresso
-  const transcribeFile = (fileItem: FileItem, mode: TranscriptionMode, language?: string) => {
+  const transcribeFile = (fileItem: FileItem, mode: TranscriptionMode, language?: string, opts?: { manageGlobalState?: boolean }) => {
+    const manageGlobalState = opts?.manageGlobalState ?? true;
     return new Promise<void>((resolve, reject) => {
       if (!fileItem?.file) {
         // marca erro no item
         setUploadedFiles(prev => prev.map(f => f.id === fileItem.id ? { ...f, status: 'error' } : f));
         toast({ title: 'Arquivo indisponível', description: 'Não foi possível acessar o arquivo para upload.', variant: 'destructive' } as any);
-        setIsProcessing(false);
-        setProcessingStage('idle');
+        if (manageGlobalState) {
+          setIsProcessing(false);
+          setProcessingStage('idle');
+        }
         return reject(new Error('Missing File object'));
       }
 
@@ -1081,8 +1049,10 @@ Em produção real, aqui estaria o vídeo original.`;
 
       xhr.onerror = () => {
         if (processingInterval) window.clearInterval(processingInterval);
-        setIsProcessing(false);
-        setProcessingStage('idle');
+        if (manageGlobalState) {
+          setIsProcessing(false);
+          setProcessingStage('idle');
+        }
         setUploadedFiles(prev => prev.map(f => f.id === fileItem.id ? { ...f, status: 'error' } : f));
         toast({ title: 'Falha ao enviar arquivo', description: 'Verifique sua conexão com o backend.', variant: 'destructive' } as any);
         reject(new Error('XHR error'));
@@ -1096,8 +1066,10 @@ Em produção real, aqui estaria o vídeo original.`;
               const resp = JSON.parse(xhr.responseText || '{}');
               if (resp?.ok) {
                 setProcessingProgress(100);
-                setIsProcessing(false);
-                setProcessingStage('completed');
+                if (manageGlobalState) {
+                  setIsProcessing(false);
+                  setProcessingStage('completed');
+                }
                 setUploadedFiles(prev => prev.map(f => f.id === fileItem.id ? { ...f, status: 'completed', progress: 100 } : f));
                 // Atualizar painel de resultado (opcional)
                 const normalizedText = (resp.text || '').normalize ? (resp.text || '').normalize('NFC') : (resp.text || '');
@@ -1114,22 +1086,28 @@ Em produção real, aqui estaria o vídeo original.`;
                   })
                   .catch(() => resolve());
               } else {
-                setIsProcessing(false);
-                setProcessingStage('idle');
+                if (manageGlobalState) {
+                  setIsProcessing(false);
+                  setProcessingStage('idle');
+                }
                 setUploadedFiles(prev => prev.map(f => f.id === fileItem.id ? { ...f, status: 'error' } : f));
                 toast({ title: 'Erro na transcrição', description: resp?.error || 'Falha ao transcrever o arquivo.', variant: 'destructive' } as any);
                 reject(new Error(resp?.error || 'Transcription failed'));
               }
             } else {
-              setIsProcessing(false);
-              setProcessingStage('idle');
+              if (manageGlobalState) {
+                setIsProcessing(false);
+                setProcessingStage('idle');
+              }
               setUploadedFiles(prev => prev.map(f => f.id === fileItem.id ? { ...f, status: 'error' } : f));
               toast({ title: 'Erro no servidor', description: `Status ${xhr.status}`, variant: 'destructive' } as any);
               reject(new Error(`HTTP ${xhr.status}`));
             }
           } catch (e: any) {
-            setIsProcessing(false);
-            setProcessingStage('idle');
+            if (manageGlobalState) {
+              setIsProcessing(false);
+              setProcessingStage('idle');
+            }
             setUploadedFiles(prev => prev.map(f => f.id === fileItem.id ? { ...f, status: 'error' } : f));
             toast({ title: 'Resposta inválida do backend', description: e?.message || String(e), variant: 'destructive' } as any);
             reject(e);
@@ -1139,6 +1117,37 @@ Em produção real, aqui estaria o vídeo original.`;
 
       xhr.send(form);
     });
+  };
+
+  // Processar a fila de transcrições de forma sequencial
+  const processTranscriptionQueue = async () => {
+    if (isProcessing) {
+      console.warn('⚠️ Já existe um processamento em andamento. Ignorando nova solicitação.');
+      return;
+    }
+
+    const queue = uploadedFiles.filter(f => !!f.file && f.status !== 'completed');
+    if (queue.length === 0) {
+      toast({ title: 'Nenhum arquivo para transcrever', description: 'Adicione um arquivo local válido para iniciar a transcrição.', variant: 'destructive' } as any);
+      return;
+    }
+
+    setIsProcessing(true);
+    setProcessingStage('processing');
+    setProcessingProgress(0);
+
+    for (const item of queue) {
+      try {
+        await transcribeFile(item, selectedMode, 'pt', { manageGlobalState: false });
+      } catch {
+        // erros já notificados via toast e estado por item
+      }
+    }
+
+    setIsProcessing(false);
+    setProcessingStage('completed');
+    setProcessingProgress(100);
+    toast({ title: 'Processamento concluído', description: `${queue.length} arquivo(s) processado(s).` } as any);
   };
 
   /*
@@ -1156,6 +1165,11 @@ Em produção real, aqui estaria o vídeo original.`;
       selectedMode
     });
 
+    if (isProcessing) {
+      console.warn('⚠️ Processamento já em andamento.');
+      return;
+    }
+
     // Encontrar primeiro arquivo realmente disponível (com objeto File)
     const first = uploadedFiles.find(f => !!f.file);
 
@@ -1169,12 +1183,8 @@ Em produção real, aqui estaria o vídeo original.`;
       return;
     }
     
-    setIsProcessing(true);
-    setProcessingProgress(0);
-    setProcessingStage('processing');
-
-    // Processar somente o primeiro arquivo válido da fila por enquanto
-    transcribeFile(first, selectedMode, 'pt').catch(() => { /* erros já tratados via toast */ });
+    // Disparar processamento sequencial de toda a fila
+    processTranscriptionQueue();
     // Não mudar de tela - manter na mesma tela com progresso
   };
 
@@ -1443,6 +1453,7 @@ Em produção real, aqui estaria o vídeo original.`;
   return (
     <div className="min-h-screen bg-gradient-to-br from-[#F8FAFC] via-[#F1F5F9] to-[#E2E8F0] font-sans">
       <Header />
+      <Toaster />
       
       {/*
       --------------------------------------------------------
@@ -1540,59 +1551,22 @@ Em produção real, aqui estaria o vídeo original.`;
           )}
 
           {currentState === 'real-time-transcription' && (
-            <RealTimeTranscription
-              isActive={true}
-              isProcessing={true}
-              onComplete={handleTranscriptionComplete}
-              onPause={handlePauseTranscription}
-              onResume={handleResumeTranscription}
-              filename={getPrimaryFilename()}
-              mode={selectedMode}
-            />
-          )}
-
-          {currentState === 'result' && (
-            <div className="space-y-[24px]">
-              <TranscriptionResult
-                transcription={transcriptionData.text}
-                language={transcriptionData.language}
-                filename={transcriptionData.filename}
-                onEdit={handleEditTranscription}
-                onTranslate={handleTranslateTranscription}
-                onDownload={handleDownloadTranscriptionFile}
+            <div className="w-full bg-white rounded-[16px] p-[24px] shadow-lg border-[1px] border-[#E5E7EB]">
+              <RealTimeTranscription
+                isActive={true}
+                isProcessing={isProcessing}
+                onComplete={handleTranscriptionComplete}
+                onPause={handlePauseTranscription}
+                onResume={handleResumeTranscription}
+                filename={getPrimaryFilename()}
+                mode={'balanced'}
               />
-              <div className="text-center">
-                <button
-                  onClick={() => setCurrentState('download')}
-                  className="px-[24px] py-[12px] bg-[#059669] text-white text-[14px] font-medium rounded-[8px] hover:bg-[#047857] transition-all duration-200"
-                >
-                  Ver Opções de Download
-                </button>
-              </div>
-            </div>
-          )}
-
-          {currentState === 'download' && (
-            <div className="space-y-[24px]">
-              <DownloadOptions
-                onDownloadVideo={handleDownloadVideo}
-                onDownloadAudio={handleDownloadAudio}
-                onDownloadTranscription={handleDownloadTranscription}
-              />
-              <div className="text-center">
-                <button
-                  onClick={handleResetApp}
-                  className="px-[24px] py-[12px] text-[#6B7280] hover:text-[#1777CF] text-[14px] font-medium transition-colors duration-200"
-                >
-                  ← Processar Novo Arquivo
-                </button>
-              </div>
             </div>
           )}
         </div>
       </main>
     </div>
   );
-}
+};
 
 export default App;
