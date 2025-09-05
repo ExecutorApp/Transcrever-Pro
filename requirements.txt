@@ -1,0 +1,21 @@
+# Dependências para o sistema de transcrição
+# Faster-Whisper para transcrição eficiente de áudio/vídeo
+faster-whisper>=1.0.0
+
+# Para processamento de áudio e vídeo
+numpy>=1.21.0
+scipy>=1.7.0
+
+# Para manipulação de arquivos de mídia
+ffmpeg-python>=0.2.0
+
+# Utilitários
+tqdm>=4.64.0
+more-itertools>=8.0.0
+
+# Dependências do faster-whisper (instaladas automaticamente)
+# ctranslate2
+# onnxruntime
+# av
+# huggingface-hub
+# tokenizers
