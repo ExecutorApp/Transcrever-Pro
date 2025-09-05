@@ -1,0 +1,11 @@
+{
+  "watch": ["server.js", "routes/*"],
+  "ignore": [
+    "uploads/*",
+    "*.tmp",
+    "*.temp",
+    "*.log",
+    "node_modules/*"
+  ],
+  "ext": "js,json"
+}

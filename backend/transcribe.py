@@ -52,12 +52,34 @@ def main():
         # Preferência por CPU com int8 para compatibilidade ampla; use GPU se disponível
         model = WhisperModel(model_size, device="cpu", compute_type="int8")
 
-        segments_gen, info = model.transcribe(
-            media_path,
-            language=args.language,
-            vad_filter=True,
-            beam_size=5 if model_size in ("small", "medium") else 1,
-        )
+        # Primeira tentativa direta; em caso de falha, reencode com FFmpeg para WAV PCM 16 kHz mono e tenta novamente
+        tmp_wav = None
+        try:
+            segments_gen, info = model.transcribe(
+                media_path,
+                language=args.language,
+                vad_filter=True,
+                beam_size=5 if model_size in ("small", "medium") else 1,
+            )
+        except Exception as e1:
+            try:
+                import ffmpeg  # ffmpeg-python
+                tmp_wav = os.path.join(os.path.dirname(media_path), os.path.basename(media_path) + ".norm.wav")
+                (
+                    ffmpeg
+                    .input(media_path)
+                    .output(tmp_wav, ac=1, ar=16000, acodec="pcm_s16le", format="wav", loglevel="error")
+                    .overwrite_output()
+                    .run(capture_stdout=True, capture_stderr=True)
+                )
+                segments_gen, info = model.transcribe(
+                    tmp_wav,
+                    language=args.language,
+                    vad_filter=True,
+                    beam_size=5 if model_size in ("small", "medium") else 1,
+                )
+            except Exception as e2:
+                raise RuntimeError(f"Falha ao processar arquivo de entrada: {e1}") from e2
 
         segments: List[dict] = []
         full_text_parts: List[str] = []
@@ -97,6 +119,13 @@ def main():
             "duration": total_duration,
             "segments": segments,
         }
+        # Limpeza de arquivo temporário de normalização, se houver
+        try:
+            if 'tmp_wav' in locals() and tmp_wav and os.path.exists(tmp_wav):
+                os.remove(tmp_wav)
+        except Exception:
+            pass
+
         sys.stdout.write(json.dumps(payload, ensure_ascii=False))
         sys.stdout.flush()
     except Exception as e:

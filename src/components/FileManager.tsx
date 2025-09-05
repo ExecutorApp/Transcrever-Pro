@@ -19,6 +19,9 @@ export interface FileItem {
   url?: string;
   // Referência opcional ao objeto File original para upload
   file?: File;
+  // Novo: status e progresso individuais para cada item
+  status?: 'pending' | 'processing' | 'completed' | 'error';
+  progress?: number; // 0-100
 }
 
 interface FileManagerProps {
@@ -86,7 +89,7 @@ const FileManager: React.FC<FileManagerProps> = ({ files, onRemoveFile }) => {
         Arquivos Selecionados ({files.length})
       </h3>
       
-      {/*
+      {/**
       --------------------------------------------------------
         Grid de Arquivos
       --------------------------------------------------------
@@ -97,7 +100,7 @@ const FileManager: React.FC<FileManagerProps> = ({ files, onRemoveFile }) => {
             key={file.id}
             className="flex items-center gap-[12px] p-[12px] bg-white border-[1px] border-[#E5E7EB] rounded-[8px] hover:border-[#1777CF] transition-all duration-200"
           >
-            {/*
+            {/**
             --------------------------------------------------------
               Ícone do Tipo de Arquivo
             --------------------------------------------------------
@@ -110,7 +113,7 @@ const FileManager: React.FC<FileManagerProps> = ({ files, onRemoveFile }) => {
               {getFileIcon(file.type)}
             </div>
 
-            {/*
+            {/**
             --------------------------------------------------------
               Informações do Arquivo
             --------------------------------------------------------
@@ -130,7 +133,7 @@ const FileManager: React.FC<FileManagerProps> = ({ files, onRemoveFile }) => {
               </div>
             </div>
 
-            {/*
+            {/**
             --------------------------------------------------------
               Botão de Remover
             --------------------------------------------------------

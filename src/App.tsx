@@ -115,6 +115,8 @@ function App() {
         duration,
         type: file.type.startsWith('video/') ? 'video' : 'audio',
         file,
+        status: 'pending',
+        progress: 0,
       };
 
       setUploadedFiles(prev => {
@@ -980,6 +982,21 @@ Em produção real, aqui estaria o vídeo original.`;
 
   /*
   --------------------------------------------------------
+    Função: Reordenar Arquivos (DnD)
+  --------------------------------------------------------
+  */
+  const handleReorderFiles = (fromIndex: number, toIndex: number) => {
+    setUploadedFiles(prev => {
+      const arr = [...prev];
+      if (fromIndex < 0 || fromIndex >= arr.length || toIndex < 0 || toIndex >= arr.length) return arr;
+      const [moved] = arr.splice(fromIndex, 1);
+      arr.splice(toIndex, 0, moved);
+      return arr;
+    });
+  };
+
+  /*
+  --------------------------------------------------------
     Função: Preparar Dados de Processamento
   --------------------------------------------------------
   */
@@ -1021,11 +1038,16 @@ Em produção real, aqui estaria o vídeo original.`;
   const transcribeFile = (fileItem: FileItem, mode: TranscriptionMode, language?: string) => {
     return new Promise<void>((resolve, reject) => {
       if (!fileItem?.file) {
+        // marca erro no item
+        setUploadedFiles(prev => prev.map(f => f.id === fileItem.id ? { ...f, status: 'error' } : f));
         toast({ title: 'Arquivo indisponível', description: 'Não foi possível acessar o arquivo para upload.', variant: 'destructive' } as any);
         setIsProcessing(false);
         setProcessingStage('idle');
         return reject(new Error('Missing File object'));
       }
+
+      // inicia estado do item
+      setUploadedFiles(prev => prev.map(f => f.id === fileItem.id ? { ...f, status: 'processing', progress: 0 } : f));
 
       const form = new FormData();
       form.append('file', fileItem.file);
@@ -1040,6 +1062,7 @@ Em produção real, aqui estaria o vídeo original.`;
         if (!e.lengthComputable) return;
         const pct = Math.min(30, Math.round((e.loaded / e.total) * 30));
         setProcessingProgress(pct);
+        setUploadedFiles(prev => prev.map(f => f.id === fileItem.id ? { ...f, progress: pct, status: 'processing' } : f));
       };
 
       let processingInterval: number | undefined;
@@ -1048,6 +1071,11 @@ Em produção real, aqui estaria o vídeo original.`;
         if (processingInterval) window.clearInterval(processingInterval);
         processingInterval = window.setInterval(() => {
           setProcessingProgress((prev) => (prev < 95 ? prev + 1 : prev));
+          setUploadedFiles(prev => prev.map(f => {
+            if (f.id !== fileItem.id) return f;
+            const next = typeof f.progress === 'number' ? f.progress + 1 : 31;
+            return { ...f, progress: next > 95 ? 95 : next };
+          }));
         }, 800);
       };
 
@@ -1055,6 +1083,7 @@ Em produção real, aqui estaria o vídeo original.`;
         if (processingInterval) window.clearInterval(processingInterval);
         setIsProcessing(false);
         setProcessingStage('idle');
+        setUploadedFiles(prev => prev.map(f => f.id === fileItem.id ? { ...f, status: 'error' } : f));
         toast({ title: 'Falha ao enviar arquivo', description: 'Verifique sua conexão com o backend.', variant: 'destructive' } as any);
         reject(new Error('XHR error'));
       };
@@ -1069,6 +1098,7 @@ Em produção real, aqui estaria o vídeo original.`;
                 setProcessingProgress(100);
                 setIsProcessing(false);
                 setProcessingStage('completed');
+                setUploadedFiles(prev => prev.map(f => f.id === fileItem.id ? { ...f, status: 'completed', progress: 100 } : f));
                 // Atualizar painel de resultado (opcional)
                 const normalizedText = (resp.text || '').normalize ? (resp.text || '').normalize('NFC') : (resp.text || '');
                 setTranscriptionData({
@@ -1086,18 +1116,21 @@ Em produção real, aqui estaria o vídeo original.`;
               } else {
                 setIsProcessing(false);
                 setProcessingStage('idle');
+                setUploadedFiles(prev => prev.map(f => f.id === fileItem.id ? { ...f, status: 'error' } : f));
                 toast({ title: 'Erro na transcrição', description: resp?.error || 'Falha ao transcrever o arquivo.', variant: 'destructive' } as any);
                 reject(new Error(resp?.error || 'Transcription failed'));
               }
             } else {
               setIsProcessing(false);
               setProcessingStage('idle');
+              setUploadedFiles(prev => prev.map(f => f.id === fileItem.id ? { ...f, status: 'error' } : f));
               toast({ title: 'Erro no servidor', description: `Status ${xhr.status}`, variant: 'destructive' } as any);
               reject(new Error(`HTTP ${xhr.status}`));
             }
           } catch (e: any) {
             setIsProcessing(false);
             setProcessingStage('idle');
+            setUploadedFiles(prev => prev.map(f => f.id === fileItem.id ? { ...f, status: 'error' } : f));
             toast({ title: 'Resposta inválida do backend', description: e?.message || String(e), variant: 'destructive' } as any);
             reject(e);
           }
@@ -1482,6 +1515,7 @@ Em produção real, aqui estaria o vídeo original.`;
                     onAddMoreFiles={handleBackToUpload}
                     processingProgress={Math.round(processingProgress)}
                     processingStage={processingStage}
+                    onReorder={handleReorderFiles}
                   />
                 </div>
               </div>

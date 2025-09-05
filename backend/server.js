@@ -20,26 +20,22 @@ const app = express();
 const PORT = process.env.PORT || 3001;
 
 // Middleware
-- app.use(cors({
--   origin: [process.env.FRONTEND_URL || 'http://localhost:5173', 'http://localhost:5174'],
--   credentials: true
-- }));
-+ const allowedOrigins = new Set([
-+   process.env.FRONTEND_URL || 'http://localhost:5173',
-+   'http://localhost:5174',
-+   'file://',
-+   'null',
-+ ]);
-+ app.use(cors({
-+   origin: (origin, callback) => {
-+     // Permitir chamadas sem origin (ex: curl) e Electron (file:// => null)
-+     if (!origin || allowedOrigins.has(origin) || process.env.ALLOW_ANY_ORIGIN === 'true') {
-+       return callback(null, true);
-+     }
-+     return callback(new Error('Not allowed by CORS'));
-+   },
-+   credentials: true,
-+ }));
+const allowedOrigins = new Set([
+  process.env.FRONTEND_URL || 'http://localhost:5173',
+  'http://localhost:5174',
+  'file://',
+  'null',
+]);
+app.use(cors({
+  origin: (origin, callback) => {
+    // Permitir chamadas sem origin (ex: curl) e Electron (file:// => null)
+    if (!origin || allowedOrigins.has(origin) || process.env.ALLOW_ANY_ORIGIN === 'true') {
+      return callback(null, true);
+    }
+    return callback(new Error('Not allowed by CORS'));
+  },
+  credentials: true,
+}));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -422,13 +418,40 @@ app.post('/api/transcribe', upload.single('file'), async (req, res) => {
 
       if (code !== 0) {
         console.error('❌ Transcrição falhou. Código de saída:', code);
-        // Tentar extrair JSON de erro do stdout
-        try {
-          const maybeJson = JSON.parse(stdout || '{}');
-          if (maybeJson && maybeJson.ok === false) {
-            return res.status(500).json(maybeJson);
+        // Tentar extrair JSON de erro do stdout (robusto a múltiplos objetos concatenados)
+        const tryParseJson = (raw) => {
+          try {
+            return JSON.parse(raw);
+          } catch {
+            try {
+              const matches = String(raw).match(/\{[\s\S]*?\}/g);
+              if (matches && matches.length) {
+                return JSON.parse(matches[matches.length - 1]);
+              }
+            } catch {}
+            return null;
           }
-        } catch {}
+        };
+
+        const maybeJson = tryParseJson(stdout);
+        if (maybeJson && maybeJson.ok === false) {
+          const errMsg = String(maybeJson.error || '').toLowerCase();
+          const isMediaErr = errMsg.includes('invalid data')
+            || errMsg.includes('falha ao processar arquivo')
+            || errMsg.includes('unsupported')
+            || errMsg.includes('codec')
+            || errMsg.includes('format');
+          if (isMediaErr) {
+            const payload = {
+              ...maybeJson,
+              code: 'UNSUPPORTED_MEDIA',
+              suggestion: 'Converta o arquivo para WAV PCM 16 kHz mono, MP3, MP4, M4A ou WebM; ou tente reenviar.',
+            };
+            return res.status(400).json(payload);
+          }
+          return res.status(500).json(maybeJson);
+        }
+
         return res.status(500).json({ ok: false, error: 'Falha ao transcrever', details: (stderr && stderr.trim()) || (stdout && stdout.trim()) || 'Sem detalhes' });
       }
 
