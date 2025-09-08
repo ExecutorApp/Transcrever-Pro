@@ -1,6 +1,6 @@
 'use strict';
 
-const { app, BrowserWindow, dialog, ipcMain, shell } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, shell, Menu } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const fsp = require('fs/promises');
@@ -58,8 +58,11 @@ function createWindow() {
       contextIsolation: true,
       sandbox: true,
     },
+	autoHideMenuBar: true,
     show: false,
   });
+  // Garantir que a barra de menu fique totalmente oculta (sem alternância via Alt)
+  mainWindow.setMenuBarVisibility(false);
 
   const devServerUrl = process.env.VITE_DEV_SERVER_URL;
   if (devServerUrl) {
@@ -77,6 +80,8 @@ app.on('window-all-closed', () => {
 });
 
 app.whenReady().then(() => {
+  // Remover completamente o menu da aplicação (oculta barra nativa)
+  Menu.setApplicationMenu(null);
   // Iniciar backend local
   startBackend();
   createWindow();
