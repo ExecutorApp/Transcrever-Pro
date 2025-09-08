@@ -23,6 +23,7 @@ const PORT = process.env.PORT || 3001;
 const allowedOrigins = new Set([
   process.env.FRONTEND_URL || 'http://localhost:5173',
   'http://localhost:5174',
+  'http://localhost:5175',
   'file://',
   'null',
 ]);
@@ -322,6 +323,66 @@ app.get('/api/health', (req, res) => {
     message: 'Backend funcionando!', 
     timestamp: new Date().toISOString() 
   });
+});
+
+// Endpoint para salvamento automático com verificação de nomes
+app.post('/api/save-transcription', async (req, res) => {
+  try {
+    const { directory, filename, content } = req.body;
+    
+    if (!directory || !filename || content === undefined) {
+      return res.status(400).json({ 
+        ok: false, 
+        error: 'Parâmetros obrigatórios: directory, filename, content' 
+      });
+    }
+
+    // Verificar se o diretório existe
+    if (!fs.existsSync(directory)) {
+      return res.status(400).json({ 
+        ok: false, 
+        error: 'Diretório não encontrado' 
+      });
+    }
+
+    // Função para gerar nome único
+    const generateUniqueFilename = (dir, originalName) => {
+      const ext = path.extname(originalName);
+      const baseName = path.basename(originalName, ext);
+      let counter = 1;
+      let newFilename = originalName;
+      
+      while (fs.existsSync(path.join(dir, newFilename))) {
+        newFilename = `${counter}_${baseName}${ext}`;
+        counter++;
+      }
+      
+      return newFilename;
+    };
+
+    const uniqueFilename = generateUniqueFilename(directory, filename);
+    const fullPath = path.join(directory, uniqueFilename);
+
+    // Salvar arquivo com BOM para compatibilidade com Notepad
+    const contentWithBOM = content.startsWith('\uFEFF') ? content : `\uFEFF${content}`;
+    fs.writeFileSync(fullPath, contentWithBOM, 'utf8');
+
+    console.log(`📄 Arquivo salvo: ${fullPath}`);
+    
+    res.json({ 
+      ok: true, 
+      path: fullPath,
+      filename: uniqueFilename,
+      message: 'Arquivo salvo com sucesso'
+    });
+  } catch (error) {
+    console.error('❌ Erro ao salvar arquivo:', error);
+    res.status(500).json({ 
+      ok: false, 
+      error: 'Erro interno ao salvar arquivo',
+      details: error.message 
+    });
+  }
 });
 
 /*

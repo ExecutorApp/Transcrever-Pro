@@ -39,6 +39,11 @@ const FileProgressList: React.FC<FileProgressListProps> = ({
   const [/*deprecated*/] = useState(false);
   const [dragIndex, setDragIndex] = useState<number | null>(null);
 
+  // Contagens para o cabeçalho (XX/YY Itens)
+  const totalCount = files.length;
+  const completedCount = files.filter((f) => f.status === 'completed').length;
+  const format2d = (n: number) => n.toString().padStart(2, '0');
+
   /*
   --------------------------------------------------------
     DnD helpers (HTML5)
@@ -68,42 +73,11 @@ const FileProgressList: React.FC<FileProgressListProps> = ({
 
   /*
   --------------------------------------------------------
-    Funções auxiliares de UI (ícones de status)
+    Funções auxiliares de UI removidas
   --------------------------------------------------------
+  StatusIcon removido conforme solicitação do usuário para
+  simplificar o layout e remover ícones redondos.
   */
-  const StatusIcon: React.FC<{ status: 'processing' | 'completed' | 'error' | 'pending' }> = ({ status }) => {
-    if (status === 'completed') {
-      return (
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden>
-          <circle cx="12" cy="12" r="10" fill="#10B981"/>
-          <path d="M7 12.5L10.5 16L17 8" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-        </svg>
-      );
-    }
-    if (status === 'processing') {
-      return (
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden className="animate-spin">
-          <circle cx="12" cy="12" r="10" stroke="#93C5FD" strokeWidth="3" />
-          <path d="M22 12a10 10 0 0 0-10-10" stroke="#1777CF" strokeWidth="3" strokeLinecap="round"/>
-        </svg>
-      );
-    }
-    if (status === 'error') {
-      return (
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden>
-          <circle cx="12" cy="12" r="10" fill="#DC2626"/>
-          <path d="M8 8l8 8M16 8l-8 8" stroke="white" strokeWidth="2" strokeLinecap="round"/>
-        </svg>
-      );
-    }
-    // pending
-    return (
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden>
-        <circle cx="12" cy="12" r="10" fill="#F59E0B"/>
-        <path d="M12 6v6l4 2" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-      </svg>
-    );
-  };
 
   /*
   --------------------------------------------------------
@@ -131,7 +105,7 @@ const FileProgressList: React.FC<FileProgressListProps> = ({
           Uploads de Arquivos
         </h3>
         <span className="text-[14px] text-[#6B7280] bg-[#F3F4F6] px-[12px] py-[4px] rounded-[20px]">
-          {files.length.toString().padStart(2, '0')} itens
+          {`${format2d(completedCount)}/${format2d(totalCount)} Itens`}
         </span>
       </div>
 
@@ -148,6 +122,23 @@ const FileProgressList: React.FC<FileProgressListProps> = ({
             className="flex-1 px-[16px] py-[12px] bg-[#1777CF] text-white text-[14px] font-medium rounded-[8px] hover:bg-[#0F5FA3] disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 shadow-sm"
           >
             + Adicionar Arquivos
+          </button>
+          {/** Botão de Limpar Lista */}
+          <button
+            onClick={() => {
+              if (isProcessing || files.length === 0) return;
+              files.forEach((f) => onRemoveFile(f.id));
+            }}
+            disabled={isProcessing || files.length === 0}
+            title="Limpar lista"
+            aria-label="Limpar lista"
+            className="w-[44px] h-[44px] bg-[#F3F4F6] text-[#6B7280] rounded-[8px] hover:bg-[#E5E7EB] disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 shadow-sm flex items-center justify-center"
+          >
+            <svg width="40" height="36" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" aria-hidden>
+              <g>
+                <path d="M43.49 4.587c.68.68.68 1.78 0 2.46L23.643 26.9l1.815 1.81a5.206 5.206 0 0 1 .642 6.6c-.299.442-.944.476-1.322.1L12.572 23.24c-.378-.377-.344-1.02.099-1.318a5.246 5.246 0 0 1 6.621.64l1.885 1.88L41.023 4.587a1.748 1.748 0 0 1 2.466 0zM4.76 30.207a.495.495 0 0 1 .47-.138c3.102.773 6.282-1.666 8.02-3.33l-2.063-2.055c-1.44 1.354-3.846 3.215-6.44 3.53-.718.086-.997.985-.486 1.494l.5.498zM19.106 43.82c.019.032.024.068.036.102.325-.08.603-.332.65-.711.314-2.588 2.182-4.986 3.54-6.422l-9.366-9.336c-1.612 1.556-4.44 3.765-7.504 3.765-.242 0-.485-.014-.728-.043l1.496 1.491a.489.489 0 0 1 .445-.144c2.788.555 5.076-1.685 5.1-1.707a.5.5 0 1 1 .705.708c-.096.096-2.132 2.09-4.891 2.09a5.75 5.75 0 0 1-.432-.022l6.608 6.588c-.644-3.268 3.368-7.33 3.56-7.52a.499.499 0 1 1 .705.708c-.047.046-4.635 4.677-3.007 7.38.12.2.076.445-.082.604l1.751 1.746c-.836-2.78 1.224-4.882 1.249-4.906a.5.5 0 0 1 .707.707c-.09.09-2.162 2.232-.542 4.922z" fill="#1777CF"/>
+              </g>
+            </svg>
           </button>
           {/** Botão de Baixar Todos removido por redundância */}
         </div>
@@ -214,10 +205,13 @@ const FileProgressList: React.FC<FileProgressListProps> = ({
 
                       {/** Informações */}
                       <div className="flex-1 min-w-0">
-                        <h4 className="text-[14px] font-semibold text-[#1F2937] truncate leading-[18px] mb-[2px]">
+                        {/** Primeira linha: apenas o título */}
+                        <h4 className="text-[14px] font-semibold text-[#1F2937] truncate leading-[18px] mb-[4px]">
                           {file.name}
                         </h4>
-                        <div className="flex items-center gap-[8px] text-[11px] leading-[14px]">
+                        
+                        {/** Segunda linha: tamanho, status e progresso */}
+                        <div className="flex items-center gap-[8px] text-[11px] leading-[14px] mb-[8px]">
                           <span className="text-[#6B7280]">{formatFileSize(file.size)}</span>
                           {file.duration && (
                             <>
@@ -228,39 +222,37 @@ const FileProgressList: React.FC<FileProgressListProps> = ({
                           {status === 'processing' ? (
                             <>
                               <span className="text-[#6B7280]">•</span>
-                              <span className="inline-flex items-center gap-[6px] text-[#1777CF] font-medium">
-                                <StatusIcon status="processing" />
+                              <span className="text-[#1777CF] font-medium">
                                 Processando {progress}%
                               </span>
                             </>
                           ) : status === 'completed' ? (
                             <>
                               <span className="text-[#6B7280]">•</span>
-                              <span className="inline-flex items-center gap-[6px] text-[#10B981] font-medium">
-                                <StatusIcon status="completed" />
+                              <span className="text-[#10B981] font-medium">
                                 Concluído
                               </span>
                             </>
                           ) : status === 'error' ? (
                             <>
                               <span className="text-[#6B7280]">•</span>
-                              <span className="inline-flex items-center gap-[6px] text-[#DC2626] font-medium">
-                                <StatusIcon status="error" />
+                              <span className="text-[#DC2626] font-medium">
                                 Erro
                               </span>
                             </>
                           ) : (
                             <>
                               <span className="text-[#6B7280]">•</span>
-                              <span className="inline-flex items-center gap-[6px] text-[#F59E0B] font-medium">
-                                <StatusIcon status="pending" />
+                              <span className="text-[#F59E0B] font-medium">
                                 Aguardando
                               </span>
                             </>
                           )}
                         </div>
+                        
+                        {/** Barra de progresso (sempre visível quando em processamento) */}
                         {status === 'processing' && (
-                          <div className="mt-[8px] w-full bg-[#F3F4F6] rounded-[6px] h-[6px] overflow-hidden">
+                          <div className="w-full bg-[#F3F4F6] rounded-[6px] h-[6px] overflow-hidden">
                             <div
                               className="h-full bg-gradient-to-r from-[#1777CF] to-[#0F5FA3] rounded-[6px] transition-all duration-500 ease-out"
                               style={{ width: `${progress}%` }}
@@ -285,10 +277,7 @@ const FileProgressList: React.FC<FileProgressListProps> = ({
                         )}
                         {isProcessing && (
                           <div className="w-[32px] h-[32px] flex items-center justify-center text-[#9CA3AF]" title="Aguarde">
-                            {/* placeholder para alinhamento */}
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                              <circle cx="12" cy="12" r="10" stroke="#E5E7EB" strokeWidth="2" />
-                            </svg>
+                            {/* placeholder para alinhamento - svg removido conforme solicitado */}
                           </div>
                         )}
                       </div>

@@ -22,6 +22,8 @@ export interface FileItem {
   // Novo: status e progresso individuais para cada item
   status?: 'pending' | 'processing' | 'completed' | 'error';
   progress?: number; // 0-100
+  // Transcrição gerada
+  transcription?: string;
 }
 
 interface FileManagerProps {

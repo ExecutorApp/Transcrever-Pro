@@ -229,7 +229,6 @@ const RealTimeTranscription: React.FC<RealTimeTranscriptionProps> = ({
       <div className="px-[24px] py-[16px] bg-gradient-to-r from-[#F8FAFC] to-[#F1F5F9] border-b-[1px] border-[#E5E7EB]">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-[12px]">
-            <div className={`w-[12px] h-[12px] rounded-full ${_internalIsProcessing && !isPaused ? 'bg-[#EF4444] animate-pulse' : isPaused ? 'bg-[#F59E0B]' : 'bg-[#10B981]'}`} />
             <div>
               <h3 className="text-[16px] font-semibold text-[#1F2937] leading-[20px]">
                 {_internalIsProcessing && !isPaused ? 'Transcrevendo em Tempo Real' : isPaused ? 'Transcrição Pausada' : 'Transcrição Concluída'}
