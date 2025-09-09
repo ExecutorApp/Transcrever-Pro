@@ -6,7 +6,7 @@ import ytdl from 'ytdl-core';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
-import { spawn } from 'child_process';
+import { spawn, spawnSync } from 'child_process';
 import { fileURLToPath } from 'url';
 
 // Carregar variáveis de ambiente
@@ -407,6 +407,31 @@ if (!fs.existsSync(uploadDir)) {
 }
 const upload = multer({ dest: uploadDir });
 
+// Resolve de forma robusta o executável do Python no SO
+function resolvePythonCommand() {
+  const candidates = [];
+  const envPy = (process.env.PYTHON || '').trim();
+  if (envPy) candidates.push(envPy);
+  if (process.platform.startsWith('win')) {
+    candidates.push('python');
+    candidates.push('py -3');
+    candidates.push('py');
+  } else {
+    candidates.push('python3');
+    candidates.push('python');
+  }
+  for (const cmd of candidates) {
+    try {
+      const parts = cmd.split(' ').filter(Boolean);
+      const bin = parts[0];
+      const args = parts.slice(1).concat('--version');
+      const res = spawnSync(bin, args, { stdio: 'ignore' });
+      if (!res.error && res.status === 0) return cmd;
+    } catch {}
+  }
+  return null;
+}
+
 app.post('/api/transcribe', upload.single('file'), async (req, res) => {
   try {
     console.log('📥 [/api/transcribe] Início da requisição', {
@@ -441,7 +466,22 @@ app.post('/api/transcribe', upload.single('file'), async (req, res) => {
       args.push('--language', lang);
     }
 
-    const py = spawn(process.platform.startsWith('win') ? 'python' : 'python3', args, {
+    // Novo: detectar o comando Python disponível
+    const pyCmd = resolvePythonCommand();
+    console.log('🐍 [/api/transcribe] Python resolvido:', pyCmd || 'NÃO ENCONTRADO');
+    if (!pyCmd) {
+      fs.unlink(inputPath, () => {});
+      return res.status(500).json({
+        ok: false,
+        error: 'Python não encontrado. Instale o Python 3.8+ ou configure a variável de ambiente PYTHON com o caminho do executável.',
+      });
+    }
+
+    const tokens = pyCmd.split(' ').filter(Boolean);
+    const pyBin = tokens[0];
+    const pyExtra = tokens.slice(1);
+
+    const py = spawn(pyBin, [...pyExtra, ...args], {
       stdio: ['ignore', 'pipe', 'pipe']
     });
 
@@ -528,4 +568,12 @@ app.post('/api/transcribe', upload.single('file'), async (req, res) => {
     console.error('Erro no endpoint /api/transcribe:', err);
     return res.status(500).json({ ok: false, error: 'Erro interno' });
   }
+});
+
+// Robustez: não deixar o processo cair por exceções não tratadas
+process.on('uncaughtException', (err) => {
+  console.error('🔥 [uncaughtException]', err);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('🔥 [unhandledRejection]', reason);
 });

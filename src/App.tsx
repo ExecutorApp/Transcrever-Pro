@@ -8,7 +8,7 @@ import RealTimeTranscription from './components/RealTimeTranscription';
 import TranscriptionModePanel, { type TranscriptionMode } from './components/TranscriptionModePanel';
 
 import { getFileBaseName, buildDefaultTranscriptContent } from './lib/utils';
-import { API_TRANSCRIBE, API_SAVE_TRANSCRIPTION } from './constants';
+import { API_TRANSCRIBE, API_SAVE_TRANSCRIPTION, API_HEALTH } from './constants';
 
 import { FileItem } from './components/FileManager';
 import { toast } from './hooks/use-toast';
@@ -167,7 +167,8 @@ const handleReorderFiles = (fromIndex: number, toIndex: number) => {
     }
 
     try {
-      const content = buildDefaultTranscriptContent(file.transcription);
+      // Usar o conteúdo real da transcrição
+      const content = file.transcription;
       // Usar o nome original do arquivo sem extensão + .txt
       const originalBaseName = getFileBaseName(file.name);
       const filename = `${originalBaseName}.txt`;
@@ -273,6 +274,19 @@ const saveTranscriptionOutputs = async (originalName: string, text: string) => {
   }
 };
 
+// Utilitário simples de healthcheck
+async function pingHealth(timeoutMs = 1500): Promise<boolean> {
+  try {
+    const ctrl = new AbortController();
+    const id = setTimeout(() => ctrl.abort(), timeoutMs);
+    const res = await fetch(API_HEALTH, { signal: ctrl.signal });
+    clearTimeout(id);
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
 // Enviar primeiro arquivo para o backend e acompanhar progresso
 const transcribeFile = (fileItem: FileItem, mode: TranscriptionMode, language?: string, opts?: { manageGlobalState?: boolean }) => {
   const manageGlobalState = opts?.manageGlobalState ?? true;
@@ -321,15 +335,37 @@ const transcribeFile = (fileItem: FileItem, mode: TranscriptionMode, language?: 
       }, 800);
     };
 
-    xhr.onerror = () => {
-      if (processingInterval) window.clearInterval(processingInterval);
-      if (manageGlobalState) {
-        setIsProcessing(false);
-        setProcessingStage('idle');
+    // Implementa retry limitado para falhas de conexão
+    let attempt = 0;
+    const maxAttempts = 3;
+    const scheduleRetry = async (reason: string) => {
+      attempt += 1;
+      console.warn(`⚠️ Transcribe retry ${attempt}/${maxAttempts}. Motivo: ${reason}`);
+      const healthy = await pingHealth();
+      if (!healthy) {
+        console.warn('⚠️ Healthcheck falhou, aguardando backend voltar...');
       }
-      setUploadedFiles(prev => prev.map(f => f.id === fileItem.id ? { ...f, status: 'error' } : f));
-      toast({ title: 'Falha ao enviar arquivo', description: 'Verifique sua conexão com o backend.', variant: 'destructive' } as any);
-      reject(new Error('XHR error'));
+      const backoff = Math.min(500 * attempt, 2000);
+      await new Promise(r => setTimeout(r, backoff));
+      if (attempt < maxAttempts) {
+        // reabrir e reenviar
+        xhr.open('POST', API_TRANSCRIBE);
+        xhr.send(form);
+      } else {
+        if (processingInterval) window.clearInterval(processingInterval);
+        if (manageGlobalState) {
+          setIsProcessing(false);
+          setProcessingStage('idle');
+        }
+        setUploadedFiles(prev => prev.map(f => f.id === fileItem.id ? { ...f, status: 'error' } : f));
+        toast({ title: 'Falha ao enviar arquivo', description: 'Conexão com backend indisponível. Tente novamente.', variant: 'destructive' } as any);
+        reject(new Error('Connection refused after retries'));
+      }
+    };
+
+    xhr.onerror = () => {
+      // Detecção de erro de conexão para retry
+      scheduleRetry('xhr.onerror');
     };
 
     xhr.onreadystatechange = () => {
@@ -369,13 +405,32 @@ const transcribeFile = (fileItem: FileItem, mode: TranscriptionMode, language?: 
               reject(new Error(resp?.error || 'Transcription failed'));
             }
           } else {
+            // Novo: tentar extrair mensagem detalhada do backend (JSON) mesmo em status 4xx/5xx
+            let description = `Status ${xhr.status}`;
+            let derivedTitle: string = 'Erro no servidor';
+            try {
+              const errJson = JSON.parse(xhr.responseText || '{}');
+              if (errJson && errJson.ok === false) {
+                description = errJson.error || description;
+                if (errJson.suggestion) {
+                  description = `${description} — ${errJson.suggestion}`;
+                }
+                // Se for erro de mídia não suportada (mapeado no backend), ajustar título
+                if (errJson.code === 'UNSUPPORTED_MEDIA' || /invalid data|unsupported|codec|format/i.test(String(errJson.error || ''))) {
+                  derivedTitle = 'Erro na transcrição';
+                }
+              }
+            } catch (parseErr) {
+              console.warn('Falha ao parsear JSON de erro do backend:', parseErr);
+            }
+
             if (manageGlobalState) {
               setIsProcessing(false);
               setProcessingStage('idle');
             }
             setUploadedFiles(prev => prev.map(f => f.id === fileItem.id ? { ...f, status: 'error' } : f));
-            toast({ title: 'Erro no servidor', description: `Status ${xhr.status}`, variant: 'destructive' } as any);
-            reject(new Error(`HTTP ${xhr.status}`));
+            toast({ title: derivedTitle, description: description, variant: 'destructive' } as any);
+            reject(new Error(description));
           }
         } catch (e: any) {
           if (manageGlobalState) {

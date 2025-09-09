@@ -8,6 +8,9 @@ const { spawn } = require('child_process');
 
 let mainWindow;
 let backendProcess = null;
++let isQuitting = false;
++let backendRestartTimer = null;
++let backendRestarts = 0;
 
 function resolveBackendEntry() {
   // Em dev: ../backend/server.js; em produção: resources/app.asar.unpacked/backend/server.js
@@ -31,15 +34,39 @@ function startBackend() {
     PORT: process.env.PORT || '3001',
     FRONTEND_URL: process.env.FRONTEND_URL || 'file://',
   };
++  // Limpa qualquer agenda de reinício pendente
++  if (backendRestartTimer) {
++    clearTimeout(backendRestartTimer);
++    backendRestartTimer = null;
++  }
   backendProcess = spawn(process.execPath, [entry], {
     env,
     stdio: 'inherit',
     windowsHide: true,
   });
++  backendRestarts = 0; // reset após start bem-sucedido
   backendProcess.on('exit', (code, signal) => {
     console.log(`[backend] encerrado (code=${code}, signal=${signal})`);
     backendProcess = null;
++    if (!isQuitting) {
++      // Reiniciar automaticamente com backoff simples
++      backendRestarts += 1;
++      const delay = Math.min(1000 * backendRestarts, 10000);
++      console.warn(`[backend] processo finalizado. Tentando reiniciar em ${delay}ms...`);
++      backendRestartTimer = setTimeout(() => {
++        try { startBackend(); } catch (e) { console.error('Falha ao reiniciar backend:', e); }
++      }, delay);
++    }
   });
++  backendProcess.on('error', (err) => {
++    console.error('[backend] erro no processo filho:', err);
++    if (!isQuitting && !backendRestartTimer) {
++      const delay = 2000;
++      backendRestartTimer = setTimeout(() => {
++        try { startBackend(); } catch (e) { console.error('Falha ao reiniciar backend após erro:', e); }
++      }, delay);
++    }
++  });
 }
 
 function stopBackend() {
@@ -92,6 +119,7 @@ app.whenReady().then(() => {
 });
 
 app.on('before-quit', () => {
++  isQuitting = true;
   stopBackend();
 });
 
