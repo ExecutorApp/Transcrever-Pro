@@ -22,6 +22,9 @@ import sys
 import os
 from typing import List
 
+# Adições: suporte a diretório de modelos embutidos e ffmpeg local
+import platform
+
 
 def map_mode_to_model(mode: str) -> str:
     # Ajuste conforme necessidade: tradeoff entre qualidade e desempenho
@@ -33,11 +36,71 @@ def map_mode_to_model(mode: str) -> str:
     return "small"  # balanced
 
 
+# Novo: resolver diretórios de runtime (PyInstaller ou script)
+def _runtime_base_dir() -> str:
+    # Quando empacotado com PyInstaller (onefile), sys._MEIPASS existe; usamos a pasta do executável
+    if getattr(sys, 'frozen', False):  # PyInstaller
+        return os.path.dirname(sys.executable)
+    # Execução via Python: usar diretório deste arquivo
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+def _resolve_ffmpeg_dir() -> str | None:
+    # Preferir variável de ambiente fornecida pelo backend
+    env_dir = os.environ.get('FFMPEG_DIR')
+    if env_dir and os.path.isdir(env_dir):
+        return env_dir
+    base = _runtime_base_dir()
+    arch = 'win-ia32' if platform.architecture()[0].startswith('32') else 'win-x64'
+    candidate = os.path.abspath(os.path.join(base, '..', 'ffmpeg', arch))
+    if os.path.isdir(candidate):
+        return candidate
+    return None
+
+
+def _inject_ffmpeg_into_path():
+    ffdir = _resolve_ffmpeg_dir()
+    if ffdir and os.path.isdir(ffdir):
+        os.environ['PATH'] = ffdir + os.pathsep + os.environ.get('PATH', '')
+
+
+# Novo: resolver diretório de modelos local
+
+def _resolve_models_root() -> str | None:
+    # 1) Variável de ambiente
+    env_dir = os.environ.get('WHISPER_MODELS_DIR')
+    if env_dir and os.path.isdir(env_dir):
+        return env_dir
+    # 2) Pasta ao lado: ../models
+    base = _runtime_base_dir()
+    candidate = os.path.abspath(os.path.join(base, '..', 'models'))
+    if os.path.isdir(candidate):
+        return candidate
+    return None
+
+
+def _maybe_local_model_path(model_size: str) -> str | None:
+    root = _resolve_models_root()
+    if not root:
+        return None
+    # Aceitar tanto layout raiz/<size> quanto raiz/faster-whisper-<size>
+    variants = [
+        os.path.join(root, model_size),
+        os.path.join(root, f"faster-whisper-{model_size}"),
+    ]
+    for p in variants:
+        if os.path.isdir(p):
+            return p
+    return None
+
+
 def main():
     parser = argparse.ArgumentParser(description="Transcrição via Faster-Whisper")
     parser.add_argument("--input", required=True, help="Caminho do arquivo de áudio/vídeo")
     parser.add_argument("--mode", default="balanced", choices=["fast", "balanced", "perfect"], help="Modo de transcrição")
     parser.add_argument("--language", default=None, help="Código do idioma (ex.: pt, en). Se omitido, detecção automática")
+    # Opcional explícito para testes/manutenção
+    parser.add_argument("--models-dir", default=None, help="Diretório raiz com os modelos CTranslate2 (opcional)")
     args = parser.parse_args()
 
     try:
@@ -45,12 +108,25 @@ def main():
         if not os.path.isfile(media_path):
             raise FileNotFoundError(f"Arquivo não encontrado: {media_path}")
 
+        # Garantir ffmpeg no PATH se empacotado
+        _inject_ffmpeg_into_path()
+
         # Importar aqui para não falhar antes com ambientes sem dependências
         from faster_whisper import WhisperModel
 
         model_size = map_mode_to_model(args.mode)
+
+        # Resolver modelo local primeiro (offline). Se não existir, usa identificador online.
+        local_root = args.models_dir or _resolve_models_root()
+        local_model = _maybe_local_model_path(model_size) if not args.models_dir else (
+            os.path.join(args.models_dir, model_size)
+            if os.path.isdir(os.path.join(args.models_dir, model_size)) else args.models_dir
+        )
+
+        model_arg = local_model if local_model and os.path.isdir(local_model) else model_size
+
         # Preferência por CPU com int8 para compatibilidade ampla; use GPU se disponível
-        model = WhisperModel(model_size, device="cpu", compute_type="int8")
+        model = WhisperModel(model_arg, device="cpu", compute_type="int8")
 
         # Primeira tentativa direta; em caso de falha, reencode com FFmpeg para WAV PCM 16 kHz mono e tenta novamente
         tmp_wav = None

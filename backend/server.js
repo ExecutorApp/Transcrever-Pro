@@ -390,9 +390,13 @@ app.post('/api/save-transcription', async (req, res) => {
   Iniciar Servidor
 --------------------------------------------------------
 */
-app.listen(PORT, () => {
-  console.log(`🚀 Backend rodando em http://localhost:${PORT}`);
+const HOST = process.env.HOST || '127.0.0.1';
+const server = app.listen(PORT, HOST, () => {
+  console.log(`🚀 Backend rodando em http://${HOST}:${PORT}`);
   console.log(`📡 Pronto para receber requisições do frontend`);
+});
+server.on('error', (err) => {
+  console.error('❌ Erro ao iniciar servidor:', err && err.message);
 });
 
 /*
@@ -432,6 +436,76 @@ function resolvePythonCommand() {
   return null;
 }
 
+// ==== Opção B: detecção de binário empacotado e FFmpeg ====
+function archToFolder() {
+  switch (process.arch) {
+    case 'x64': return 'win32-x64';
+    case 'ia32': return 'win32-ia32';
+    case 'arm64': return 'win32-arm64';
+    default: return null;
+  }
+}
+
+function resolveTranscriberBinary() {
+  const base = __dirname; // quando empacotado, este é .../resources/backend
+  const archFolder = archToFolder();
+  const candidates = [
+    // padrão preferido: backend/transcribe.exe
+    path.join(base, 'transcribe.exe'),
+    // alternativas: backend/bin/<arch>/transcribe.exe
+    archFolder ? path.join(base, 'bin', archFolder, 'transcribe.exe') : null,
+    path.join(base, 'bin', 'transcribe.exe'),
+  ].filter(Boolean);
+  for (const p of candidates) {
+    try { if (fs.existsSync(p)) return p; } catch {}
+  }
+  return null;
+}
+
+function maybeResolveModelsDir() {
+  try {
+    const p = path.join(__dirname, 'models');
+    if (fs.existsSync(p)) return p;
+  } catch {}
+  return null;
+}
+
+function injectFfmpegIntoEnv(envLike = {}) {
+  const env = { ...envLike };
+  const archFolder = archToFolder();
+  // Candidatos antigos (quando empacotado em backend/ffmpeg/...)
+  const legacyCandidates = [
+    path.join(__dirname, 'ffmpeg', 'bin'),
+    archFolder ? path.join(__dirname, 'ffmpeg', archFolder, 'bin') : null,
+  ].filter(Boolean);
+
+  // Novos candidatos: script fetch-ffmpeg instala em backend/bin/<arch>/ffmpeg.exe
+  const binArchDir = archFolder ? path.join(__dirname, 'bin', archFolder) : null;
+  const binGenericDir = path.join(__dirname, 'bin');
+  const modernCandidates = [binArchDir, binGenericDir].filter(Boolean);
+
+  // Verificar existência do ffmpeg.exe nos diretórios candidatos
+  const candidateDirs = [...legacyCandidates, ...modernCandidates].filter((d) => {
+    try { return fs.existsSync(d); } catch { return false; }
+  });
+
+  // Escolher o primeiro diretório que contenha ffmpeg.exe
+  let chosenDir = null;
+  for (const d of candidateDirs) {
+    try {
+      const exe = path.join(d, 'ffmpeg.exe');
+      if (fs.existsSync(exe)) { chosenDir = d; break; }
+    } catch {}
+  }
+
+  if (chosenDir) {
+    const PATHKEY = Object.keys(env).find(k => k.toLowerCase() === 'path') || 'PATH';
+    env[PATHKEY] = `${chosenDir}${path.delimiter}${env[PATHKEY] || ''}`;
+    // Fornecer também FFMPEG_DIR para o transcribe.py localizar explicitamente
+    env.FFMPEG_DIR = chosenDir;
+  }
+  return env;
+}
 app.post('/api/transcribe', upload.single('file'), async (req, res) => {
   try {
     console.log('📥 [/api/transcribe] Início da requisição', {
@@ -454,36 +528,53 @@ app.post('/api/transcribe', upload.single('file'), async (req, res) => {
 
     console.log('🧪 [/api/transcribe] Execução do Python', { pyPath, pyExists, inputPath, inputExists, mode, language });
     if (!pyExists) {
-      return res.status(500).json({ ok: false, error: 'Script transcribe.py não encontrado', details: pyPath });
+      // Não impedimos execução aqui: quando houver binário empacotado, seguiremos com ele
+      console.warn('Aviso: transcribe.py não encontrado. Tentaremos binário empacotado, se existir.');
     }
     if (!inputExists) {
       return res.status(500).json({ ok: false, error: 'Arquivo temporário não encontrado para transcrição', details: inputPath });
     }
 
-    const args = [pyPath, '--input', inputPath, '--mode', mode];
+    // Preparar argumentos comuns
     const lang = (language && typeof language === 'string' && language.trim()) ? language.trim() : 'pt';
-    if (lang) {
-      args.push('--language', lang);
-    }
+    const baseArgs = ['--input', inputPath, '--mode', mode];
+    if (lang) baseArgs.push('--language', lang);
+    const modelsDir = maybeResolveModelsDir();
+    if (modelsDir) baseArgs.push('--models-dir', modelsDir);
 
-    // Novo: detectar o comando Python disponível
-    const pyCmd = resolvePythonCommand();
-    console.log('🐍 [/api/transcribe] Python resolvido:', pyCmd || 'NÃO ENCONTRADO');
-    if (!pyCmd) {
-      fs.unlink(inputPath, () => {});
-      return res.status(500).json({
-        ok: false,
-        error: 'Python não encontrado. Instale o Python 3.8+ ou configure a variável de ambiente PYTHON com o caminho do executável.',
+    // Preferir binário empacotado quando presente
+    const exePath = resolveTranscriberBinary();
+    const childEnv = injectFfmpegIntoEnv(process.env);
+
+    let py; // processo filho (binário ou Python)
+    if (exePath) {
+      console.log('🧩 [/api/transcribe] Usando binário empacotado:', exePath);
+      py = spawn(exePath, baseArgs, {
+        stdio: ['ignore', 'pipe', 'pipe'],
+        windowsHide: true,
+        cwd: path.dirname(exePath),
+        env: childEnv,
+      });
+    } else {
+      // Fallback: usar Python local
+      const pyCmd = resolvePythonCommand();
+      console.log('🐍 [/api/transcribe] Python resolvido:', pyCmd || 'NÃO ENCONTRADO');
+      if (!pyCmd) {
+        fs.unlink(inputPath, () => {});
+        return res.status(500).json({
+          ok: false,
+          error: 'Python não encontrado. Instale o Python 3.8+ ou configure a variável de ambiente PYTHON com o caminho do executável.',
+        });
+      }
+      const tokens = pyCmd.split(' ').filter(Boolean);
+      const pyBin = tokens[0];
+      const pyExtra = tokens.slice(1);
+      const args = [pyPath, ...baseArgs];
+      py = spawn(pyBin, [...pyExtra, ...args], {
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env: childEnv,
       });
     }
-
-    const tokens = pyCmd.split(' ').filter(Boolean);
-    const pyBin = tokens[0];
-    const pyExtra = tokens.slice(1);
-
-    const py = spawn(pyBin, [...pyExtra, ...args], {
-      stdio: ['ignore', 'pipe', 'pipe']
-    });
 
     let stdout = '';
     let stderr = '';
@@ -502,11 +593,11 @@ app.post('/api/transcribe', upload.single('file'), async (req, res) => {
     });
 
     py.on('error', (err) => {
-      console.error('❌ Erro ao iniciar processo Python:', err);
+      console.error('❌ Erro ao iniciar processo Python/binário:', err);
       if (!responded) {
         responded = true;
         fs.unlink(inputPath, () => {});
-        return res.status(500).json({ ok: false, error: 'Falha ao iniciar Python (verifique se Python está instalado e no PATH)', details: String(err?.message || err) });
+        return res.status(500).json({ ok: false, error: 'Falha ao iniciar transcritor', details: String(err?.message || err) });
       }
     });
 
@@ -556,11 +647,32 @@ app.post('/api/transcribe', upload.single('file'), async (req, res) => {
         return res.status(500).json({ ok: false, error: 'Falha ao transcrever', details: (stderr && stderr.trim()) || (stdout && stdout.trim()) || 'Sem detalhes' });
       }
 
+      // Código 0: ainda assim seja resiliente à saída contaminada por logs em stdout
+      const tryParseJsonLoose = (raw) => {
+        try {
+          return JSON.parse(raw);
+        } catch (e) {
+          try {
+            const matches = String(raw).match(/\{[\s\S]*?\}/g);
+            if (matches && matches.length) {
+              return JSON.parse(matches[matches.length - 1]);
+            }
+          } catch {}
+          return null;
+        }
+      };
+
       try {
-        const payload = JSON.parse(stdout || '{}');
+        const payload = tryParseJsonLoose(stdout || '{}');
+        if (!payload || typeof payload !== 'object' || payload.ok !== true) {
+          // Log de diagnóstico limitado para próximos incidentes
+          const preview = (stdout || '').slice(Math.max(0, (stdout || '').length - 800));
+          console.error('⚠️  Saída do transcritor não parseável em sucesso. Tamanho stdout:', (stdout || '').length, 'prévia final:', preview);
+          return res.status(500).json({ ok: false, error: 'Resposta inválida do transcritor' });
+        }
         return res.json(payload);
       } catch (e) {
-        console.error('Erro parseando saída Python:', e, stdout);
+        console.error('Erro parseando saída do transcritor:', e, stdout);
         return res.status(500).json({ ok: false, error: 'Resposta inválida do transcritor' });
       }
     });

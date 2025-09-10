@@ -1,7 +1,7 @@
 {
   "name": "transcrever-pro",
   "private": true,
-  "version": "1.1.0",
+  "version": "1.1.1",
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
@@ -11,7 +11,12 @@
     "preview": "vite preview",
     "desktop": "concurrently -k -n \"VITE,ELECTRON\" -c \"cyan.bold,green.bold\" \"vite --port 5175\" \"wait-on http://localhost:5175 && cross-env VITE_DEV_SERVER_URL=http://localhost:5175 electron .\"",
     "backend:ci": "npm ci --prefix backend",
-    "dist": "npm run build && npm run backend:ci && electron-builder --windows"
+    "py:build:x64": "node scripts/build-transcriber.js --arch=x64",
+    "py:build:ia32": "node scripts/build-transcriber.js --arch=ia32",
+    "py:build:all": "node scripts/build-transcriber.js --arch=x64",
+    "ffmpeg:fetch": "node scripts/fetch-ffmpeg.js --arch=x64",
+    "dist": "npm run build && npm run backend:ci && npm run py:build:all && npm run ffmpeg:fetch && electron-builder --win --x64",
+    "dist:fresh": "node build-installer.js"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.9.0",
@@ -94,15 +99,28 @@
     "files": [
       "dist/**",
       "electron/**",
-      "backend/**",
       "package.json"
     ],
-    "asarUnpack": [
-      "backend/**"
+    "extraResources": [
+      {
+        "from": "backend",
+        "to": "backend",
+        "filter": [
+          "**/*",
+          "!node_modules/**"
+        ]
+      },
+      {
+        "from": "backend/node_modules",
+        "to": "backend/node_modules",
+        "filter": [
+          "**/*"
+        ]
+      }
     ],
     "win": {
       "target": [
-        "nsis"
+        { "target": "nsis", "arch": ["x64"] }
       ],
       "artifactName": "${productName}-Setup-${version}.${ext}"
     },
@@ -111,7 +129,8 @@
       "perMachine": false,
       "allowToChangeInstallationDirectory": false,
       "createDesktopShortcut": true,
-      "createStartMenuShortcut": true
+      "createStartMenuShortcut": true,
+      "include": "build/installer.nsh"
     }
   }
 }
