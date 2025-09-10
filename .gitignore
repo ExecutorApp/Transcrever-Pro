@@ -32,3 +32,11 @@ release/
 
 # TypeScript build info
 *.tsbuildinfo
+
+# Large binary files and build artifacts
+backend/bin/
+.pybuild/
+*.exe
+*.pkg
+.temp-ffmpeg/
+backend/uploads/
